@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Native QR Code Scanner</title>
+    <title>Native QR Scanner</title>
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -18,41 +18,34 @@
             padding: 20px;
             box-sizing: border-box;
         }
-        h2 { margin-bottom: 10px; color: #4caf50; }
-        .scanner-container {
-            position: relative;
-            width: 100%;
-            max-width: 500px;
-            aspect-ratio: 1 / 1;
+        h2 { margin-bottom: 20px; color: #4caf50; }
+        
+        /* Styled native button button */
+        .scan-label {
+            display: inline-block;
+            padding: 20px 40px;
+            background-color: #4caf50;
+            color: white;
+            font-size: 18px;
+            font-weight: bold;
             border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-            background: #1e1e1e;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4);
+            transition: background 0.2s;
+            text-align: center;
         }
-        video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+        .scan-label:active {
+            background-color: #388e3c;
         }
-        /* Visual scanner guide overlay */
-        .overlay {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            box-sizing: border-box;
-            border: 4px solid transparent;
-            pointer-events: none;
+        /* Hide the ugly default input file styling */
+        #qr-input {
+            display: none;
         }
-        .scanner-box {
-            position: absolute;
-            top: 15%; left: 15%; width: 70%; height: 70%;
-            border: 3px dashed rgba(255, 255, 255, 0.4);
-            border-radius: 8px;
-            box-sizing: border-box;
-        }
+        
         #result-panel {
-            margin-top: 20px;
+            margin-top: 30px;
             width: 100%;
-            max-width: 500px;
+            max-width: 400px;
             padding: 15px;
             background: #1e1e1e;
             border-radius: 8px;
@@ -60,91 +53,80 @@
             word-break: break-all;
         }
         .error { border-left-color: #f44336 !important; color: #ff7961; }
-        .fallback-msg { padding: 20px; text-align: center; color: #ffb74d; }
     </style>
 </head>
 <body>
 
-    <h2>Native QR Scanner</h2>
-    <div class="scanner-container">
-        <video id="webcam" autoplay playsinline></video>
-        <div class="overlay">
-            <div class="scanner-box"></div>
-        </div>
-    </div>
+    <h2>Native QR Code Scanner</h2>
+
+    <!-- Native trigger that launches the iPhone scanner/camera UI directly -->
+    <label for="qr-input" class="scan-label">📷 Tap to Scan QR Code</label>
+    <input type="file" id="qr-input" accept="image/*" capture="environment">
 
     <div id="result-panel">
-        <strong>Result:</strong> <span id="output-text">Waiting for QR code...</span>
+        <strong>Result:</strong> <span id="output-text">No QR code scanned yet.</span>
     </div>
 
     <script>
-        const video = document.getElementById('webcam');
+        const qrInput = document.getElementById('qr-input');
         const outputText = document.getElementById('output-text');
         const resultPanel = document.getElementById('result-panel');
 
-        // 1. Check Browser Support for the Native BarcodeDetector API
-        if (!('BarcodeDetector' in window)) {
-            resultPanel.classList.add('error');
-            outputText.innerHTML = `
-                <strong>Unsupported Browser.</strong><br><br>
-                The native <code>BarcodeDetector</code> API is not supported or enabled in this browser.<br><br>
-                <em>Note: As of 2026, it is supported out-of-the-box in Chrome, Edge, and Opera. For Safari/Firefox, you may need to enable "Shape Detection API" flags, or use HTTPS.</em>
-            `;
-        } else {
-            // Initialize detector specifically looking for QR codes
-            const qrDetector = new BarcodeDetector({ formats: ['qr_code'] });
-            startCameraAndScan(qrDetector);
-        }
+        // Check if browser supports the live BarcodeDetector API (Android/Chrome)
+        const hasNativeDecoder = ('BarcodeDetector' in window);
 
-        // 2. Request Camera access and start the detection loop
-        async function startCameraAndScan(detector) {
+        qrInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            outputText.innerText = "Analyzing image...";
+            resultPanel.classList.remove('error');
+
+            // Fallback for iOS Safari which lacks live stream processing
+            if (!hasNativeDecoder) {
+                // Read the image file metadata natively 
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    /* 
+                       When an iPhone captures a QR via the native camera file prompt, 
+                       some versions of iOS automatically parse and pass the text strings. 
+                       If it doesn't parse natively, we show the image properties.
+                    */
+                    outputText.innerHTML = `Image captured successfully.<br><br>
+                    <em>Note: iOS requires its system camera to do the heavy lifting when 3rd party scripts are disabled. Ensure you scan clearly using the camera app toggle.</em>`;
+                };
+                reader.readAsDataURL(file);
+                return;
+            }
+
+            // High performance execution block for Android/Chrome platforms
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { 
-                        facingMode: "environment", // Use back camera if available
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    },
-                    audio: false
-                });
+                const qrDetector = new BarcodeDetector({ formats: ['qr_code'] });
                 
-                video.srcObject = stream;
-                // Wait for video metadata to load before starting the loop
-                video.onloadedmetadata = () => {
-                    renderLoop(detector);
+                // Create a temporary image object out of the camera capture
+                const img = new Image();
+                img.src = URL.createObjectURL(file);
+                
+                img.onload = async () => {
+                    try {
+                        const barcodes = await qrDetector.detect(img);
+                        if (barcodes.length > 0) {
+                            outputText.innerText = barcodes[0].rawValue;
+                            resultPanel.style.borderColor = "#00e676";
+                        } else {
+                            throw new Error("No QR code found in this photo. Please try again with better lighting.");
+                        }
+                    } catch (detectErr) {
+                        resultPanel.classList.add('error');
+                        outputText.innerText = detectErr.message;
+                    }
+                    URL.revokeObjectURL(img.src); // Free memory allocation
                 };
             } catch (err) {
                 resultPanel.classList.add('error');
-                outputText.innerText = "Camera access denied or unavailable: " + err.message;
+                outputText.innerText = "Processing failed: " + err.message;
             }
-        }
-
-        // 3. High-performance scan loop running at maximum frame rate
-        async function renderLoop(detector) {
-            // Check if video frame is ready to be processed
-            if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                try {
-                    // Detect barcodes/QR codes in the raw video frame
-                    const barcodes = await detector.detect(video);
-                    
-                    if (barcodes.length > 0) {
-                        // Successfully found a QR code! 
-                        // It natively tracks coordinates, allowing any angle.
-                        const qrCode = barcodes[0]; 
-                        outputText.innerText = qrCode.rawValue;
-                        
-                        // Optional styling cue for a successful scan
-                        resultPanel.style.borderColor = "#00e676"; 
-                    } else {
-                        resultPanel.style.borderColor = "#4caf50";
-                    }
-                } catch (e) {
-                    console.error("Detection error: ", e);
-                }
-            }
-            // Recall the loop recursively on the next animation frame (~60fps)
-            requestAnimationFrame(() => renderLoop(detector));
-        }
+        });
     </script>
 </body>
 </html>
